@@ -11,14 +11,22 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "pico/stdlib.h"
 #include "pico/binary_info.h"
+#include "hardware/pio.h"
 #include "hardware/clocks.h"
 #include "pio/pio_spi.h"
+#include "ws2812/ws2812.pio.h"
 #include "spi.h"
 
+#define LED_TYPE 0 // DEFAULT: 0 or WS2812: 1
+#if LED_TYPE == 1
+#define PIN_LED 16 // RP2040-Zero WS2812 PIN
+#elif LED_TYPE == 0
 #define PIN_LED PICO_DEFAULT_LED_PIN
+#endif
 #define PIN_MISO 4
 #define PIN_MOSI 3
 #define PIN_SCK 2
@@ -209,6 +217,17 @@ static uint32_t serprog_spi_init(uint32_t freq) {
     return clkdiv_to_freq(clkdiv);
 }
 
+static inline void put_pixel(uint32_t pixel_grb) {
+    pio_sm_put_blocking(pio0, 0, pixel_grb << 8u);
+}
+
+static inline uint32_t urgb_u32(uint8_t r, uint8_t g, uint8_t b) {
+    return
+            ((uint32_t) (r) << 8) |
+            ((uint32_t) (g) << 16) |
+            (uint32_t) (b);
+}
+
 int main() {
     // Metadata for picotool
     bi_decl(bi_program_description("Flashrom/serprog compatible firmware for the Raspberry Pi Pico"));
@@ -232,16 +251,34 @@ int main() {
     spi_offset = pio_add_program(spi.pio, &spi_cpha0_program);
     serprog_spi_init(1000000); // 1 MHz
 
+#if LED_TYPE == 1
+    PIO pio = pio0;
+    int sm = 0;
+    uint offset = pio_add_program(pio, &ws2812_program);
+    ws2812_program_init(pio, sm, offset, PIN_LED, 800000, true);
+    put_pixel(urgb_u32(0xff, 0, 0)); // Default RED light act as a 'init done' indicator
+#elif LED_TYPE == 0
     gpio_init(PIN_LED);
     gpio_set_dir(PIN_LED, GPIO_OUT);
+#endif
 
     // Command handling
     while(1) {
         int command = getchar();
 
+#if LED_TYPE == 1
+        put_pixel(urgb_u32(0xff, 0, 0xff));
+#elif LED_TYPE == 0
         gpio_put(PIN_LED, 1);
+#endif
+
         process(&spi, command);
+
+#if LED_TYPE == 1
+        put_pixel(urgb_u32(0xff, 0, 0));
+#elif LED_TYPE == 0
         gpio_put(PIN_LED, 0);
+#endif
     }
 
     return 0;
